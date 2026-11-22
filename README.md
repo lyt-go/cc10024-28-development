@@ -77,5 +77,35 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 来源字段校验与受控共享写入
+
+数据抽取在“按目标模块取规则”的旧 Schema 校验之外，新增按来源站点执行的
+来源字段校验（`backend/app/routers/ingestion.py`，前缀 `/api/ingestion`）：
+
+- 规则归属：`schema_check` 规则带「归属站点」，站点值为专属规则（仅限录入时
+  登记的站点维护），`shared` 为共享数据集的共用定义；站点之间写入权限独立，
+  不能改动别站的共享范围。
+- 站点字段校验回执：同一来源一次出具两层结论，各自带实用规则与原值——
+  - 站点层：有专属规则用专属规则，否则回落到共用定义；
+  - 共享层：公共编号列只接收确定整数，可解析的文本（如 `"007"`）判为
+    “待转换”，判定前保留原值与前导零，转换确认前不得进入该列。
+- 数据抽取据回执分流：站点层通过 → 站点结构化行（本地可接收行）；待转换 →
+  待转换来源；越权写入与拦截 → 拦截清单（保留原值与适用规则）。
+- 相同来源重送幂等，不增加产出行；回执不可变，规则更新只影响新回执，
+  复查旧回执（`/receipts/recheck`）不会改动原结果。
+- 旧口径 `validate_record` 完整保留：`int` 约束仅检验可解析性，文本 `"007"`
+  在旧校验中仍通过。
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/ingestion/rules` | 登记来源校验规则（专属/共用） |
+| `POST /api/ingestion/rules/{id}` | 归属站点更新专属规则 |
+| `POST /api/ingestion/receipts` | 仅出具两层结论的站点字段校验回执 |
+| `POST /api/ingestion/receipts/recheck` | 复查旧回执（原结果不变，附现行规则评估） |
+| `POST /api/ingestion/sources` | 采集来源并分流为结构化行/待转换/拦截 |
+| `POST /api/ingestion/conversions/confirm` | 归属站点确认待转换文本 |
+| `POST /api/ingestion/shared-writes` | 按回执受控写入共享数据集（校验归属） |
+| `GET /api/ingestion/views/{local-rows,shared-rows,pending,interceptions}` | 采集产物视图 |
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
